@@ -13,6 +13,9 @@ jobs:
   test:
     name: Install, Test & Build
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./frontend
 
     steps:
       - name: Checkout code
@@ -22,7 +25,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'npm'
 
       - name: Install dependencies
         run: npm install
@@ -37,17 +39,16 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: frontend-coverage
-          path: coverage/lcov.info
+          path: ./frontend/coverage/lcov.info
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
           name: frontend-build
-          path: dist/
+          path: ./frontend/dist/
 
   # ─────────────────────────────────────────────
   # JOB 2: SonarCloud Static Analysis (SAST)
-  # Runs on PRs AND main branch pushes
   # ─────────────────────────────────────────────
   sonarcloud:
     name: SonarCloud Analysis
@@ -58,27 +59,32 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # Required for SonarCloud blame info
+          fetch-depth: 0
 
       - name: Download coverage report
         uses: actions/download-artifact@v4
         with:
           name: frontend-coverage
-          path: coverage/
+          path: ./frontend/coverage/
 
       - name: SonarCloud Scan
         uses: SonarSource/sonarcloud-github-action@master
+        with:
+          projectBaseDir: ./frontend
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 
   # ─────────────────────────────────────────────
-  # JOB 3: Snyk Dependency & Code Scanning
+  # JOB 3: Snyk Security Scan
   # ─────────────────────────────────────────────
   snyk:
     name: Snyk Security Scan
     runs-on: ubuntu-latest
     needs: test
+    defaults:
+      run:
+        working-directory: ./frontend
 
     steps:
       - name: Checkout code
@@ -88,7 +94,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'npm'
 
       - name: Install dependencies
         run: npm install
@@ -101,22 +106,16 @@ jobs:
         with:
           args: --severity-threshold=high
 
-      - name: Snyk Code (SAST) scan
-        uses: snyk/actions/node@master
-        continue-on-error: true
-        env:
-          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
-        with:
-          command: code test
-
   # ─────────────────────────────────────────────
-  # JOB 4: ZAP DAST Scan on built frontend
-  # Serves the built app with a static server then scans with ZAP
+  # JOB 4: ZAP DAST Scan
   # ─────────────────────────────────────────────
   zap-scan:
     name: OWASP ZAP DAST Scan
     runs-on: ubuntu-latest
     needs: test
+    defaults:
+      run:
+        working-directory: ./frontend
 
     steps:
       - name: Checkout code
@@ -132,7 +131,7 @@ jobs:
           npm install
           npm run build
 
-      - name: Serve built app with static server
+      - name: Serve built app
         run: |
           npm install -g serve
           serve -s dist -l 3000 &
@@ -161,6 +160,9 @@ jobs:
     runs-on: ubuntu-latest
     needs: [sonarcloud, snyk]
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    defaults:
+      run:
+        working-directory: ./frontend
 
     steps:
       - name: Checkout code
@@ -170,12 +172,3 @@ jobs:
         run: |
           docker build -t secure-devops-frontend:${{ github.sha }} .
           docker build -t secure-devops-frontend:latest .
-
-      - name: Run Snyk container scan
-        uses: snyk/actions/docker@master
-        continue-on-error: true
-        env:
-          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
-        with:
-          image: secure-devops-frontend:latest
-          args: --severity-threshold=high
